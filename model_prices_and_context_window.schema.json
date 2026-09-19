@@ -449,6 +449,114 @@
           "type": "number",
           "minimum": 0
         },
+        "off_peak_pricing": {
+          "additionalProperties": false,
+          "anyOf": [
+            {
+              "required": [
+                "hours_utc"
+              ]
+            },
+            {
+              "required": [
+                "windows"
+              ]
+            }
+          ],
+          "description": "Rates that replace the same-named base fields while the request falls inside the stated UTC windows.",
+          "properties": {
+            "cache_creation_input_token_cost": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "cache_read_input_token_cost": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "hours_utc": {
+              "description": "UTC \"HH:MM-HH:MM\" window, or a list of them; a window may wrap past midnight.",
+              "oneOf": [
+                {
+                  "pattern": "^([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$",
+                  "type": "string"
+                },
+                {
+                  "items": {
+                    "pattern": "^([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$",
+                    "type": "string"
+                  },
+                  "minItems": 1,
+                  "type": "array"
+                }
+              ]
+            },
+            "input_cost_per_token": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "output_cost_per_reasoning_token": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "output_cost_per_token": {
+              "minimum": 0,
+              "type": "number"
+            },
+            "weekday_timezone": {
+              "description": "IANA zone the weekdays of each window are read on; defaults to UTC.",
+              "type": "string"
+            },
+            "windows": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "hours_utc": {
+                    "description": "UTC \"HH:MM-HH:MM\" window, or a list of them; a window may wrap past midnight.",
+                    "oneOf": [
+                      {
+                        "pattern": "^([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$",
+                        "type": "string"
+                      },
+                      {
+                        "items": {
+                          "pattern": "^([01]\\d|2[0-3]):[0-5]\\d-([01]\\d|2[0-3]):[0-5]\\d$",
+                          "type": "string"
+                        },
+                        "minItems": 1,
+                        "type": "array"
+                      }
+                    ]
+                  },
+                  "weekdays": {
+                    "description": "ISO-8601 weekday numbers (1 = Monday .. 7 = Sunday) or English day names the window applies on.",
+                    "items": {
+                      "oneOf": [
+                        {
+                          "maximum": 7,
+                          "minimum": 1,
+                          "type": "integer"
+                        },
+                        {
+                          "pattern": "(?i)^(mon|monday|tue|tues|tuesday|wed|wednesday|thu|thur|thurs|thursday|fri|friday|sat|saturday|sun|sunday)$",
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [
+                  "hours_utc"
+                ],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "type": "object"
+        },
         "output_cost_per_audio_token": {
           "type": "number",
           "minimum": 0
