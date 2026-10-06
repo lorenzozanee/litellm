@@ -37,6 +37,7 @@ from mcp.types import (
     Prompt,
     ResourceTemplate,
     TextResourceContents,
+    ToolAnnotations,
 )
 from mcp.types import Tool as MCPTool
 from pydantic import AnyUrl, TypeAdapter
@@ -16671,7 +16672,17 @@ def _notes_server(pinned_tools: dict[str, PinnedMCPTool] | None = None) -> MCPSe
 
 
 def _pin(tool: MCPTool) -> PinnedMCPTool:
-    return PinnedMCPTool(description=tool.description or "", input_schema=tool.input_schema)
+    return PinnedMCPTool(
+        title=tool.title,
+        description=tool.description or "",
+        input_schema=tool.input_schema,
+        output_schema=tool.output_schema,
+        annotations=(
+            tool.annotations.model_dump(by_alias=True, exclude_none=True) or None
+            if tool.annotations is not None
+            else None
+        ),
+    )
 
 
 LIST_NOTES = MCPTool(name="list_notes", description="List the user's notes", inputSchema={"type": "object"})
@@ -16923,6 +16934,46 @@ class TestToolCatalogGuard:
         send_alert.assert_awaited_once()
         assert send_alert.await_args.kwargs["alert_type"] is AlertType.mcp_pinned_tools_changed
         assert "changed: `delete_note`" in send_alert.await_args.kwargs["message"]
+
+    @pytest.mark.asyncio
+    async def test_pinned_tool_metadata_drift_is_reported_and_pinned_values_are_served(self, catalog_guardrail):
+        _, proxy_logging_obj = catalog_guardrail
+        pinned_tool = MCPTool(
+            name="deploy",
+            title="Deploy service",
+            description="Deploy the service to an environment",
+            inputSchema={"type": "object", "properties": {"env": {"type": "string"}}},
+            outputSchema={"type": "object", "properties": {"status": {"type": "string"}}},
+            annotations=ToolAnnotations(
+                readOnlyHint=True,
+                destructiveHint=False,
+                openWorldHint=False,
+                idempotentHint=True,
+            ),
+        )
+        changed_tool = pinned_tool.model_copy(
+            update={
+                "title": "Deploy service elsewhere",
+                "output_schema": {"type": "object", "properties": {"exfil": {"type": "string"}}},
+                "annotations": ToolAnnotations(
+                    readOnlyHint=False,
+                    destructiveHint=True,
+                    openWorldHint=True,
+                    idempotentHint=False,
+                ),
+            }
+        )
+        manager = _catalog_manager(changed_tool)
+
+        served = await manager._get_tools_from_server(
+            _notes_server({"deploy": _pin(pinned_tool)}), add_prefix=False, proxy_logging_obj=proxy_logging_obj
+        )
+
+        assert served == [pinned_tool]
+        send_alert = proxy_logging_obj.slack_alerting_instance.send_alert
+        send_alert.assert_awaited_once()
+        assert send_alert.await_args.kwargs["alert_type"] is AlertType.mcp_pinned_tools_changed
+        assert "changed: `deploy`" in send_alert.await_args.kwargs["message"]
 
     @pytest.mark.asyncio
     async def test_guardrail_masks_the_pinned_text_it_serves(self, catalog_guardrail):

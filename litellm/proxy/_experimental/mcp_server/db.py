@@ -2303,7 +2303,7 @@ async def set_mcp_server_pinned_tools(
 
     if await _db_find_mcp_server_row(prisma_client, server_id) is None:
         return None
-    snapshot: Final = {name: tool.model_dump() for name, tool in (pinned_tools or {}).items()}
+    snapshot: Final = {name: tool.model_dump(exclude_none=True) for name, tool in (pinned_tools or {}).items()}
     updated: Final = await _db_update_mcp_server_row(
         prisma_client,
         server_id,

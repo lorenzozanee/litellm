@@ -799,7 +799,17 @@ if MCP_AVAILABLE:
         )
         pinnable: Final = frozenset(tool.name for tool in scan.served)
         return {
-            tool.name: PinnedMCPTool(description=tool.description or "", input_schema=tool.input_schema)
+            tool.name: PinnedMCPTool(
+                title=tool.title,
+                description=tool.description or "",
+                input_schema=tool.input_schema,
+                output_schema=tool.output_schema,
+                annotations=(
+                    tool.annotations.model_dump(by_alias=True, exclude_none=True) or None
+                    if tool.annotations is not None
+                    else None
+                ),
+            )
             for tool in upstream
             if tool.name in pinnable
         }

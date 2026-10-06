@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Final
 
 from mcp.types import Tool as MCPTool
+from mcp.types import ToolAnnotations
 from pydantic import TypeAdapter
 from typing_extensions import ReadOnly, TypedDict
 
@@ -23,8 +24,11 @@ if TYPE_CHECKING:
 
 
 class _ServedCatalogEntry(TypedDict, total=False):
+    title: ReadOnly[str | None]
     description: ReadOnly[str | None]
     input_schema: ReadOnly[Mapping[str, object]]
+    output_schema: ReadOnly[Mapping[str, object] | None]
+    annotations: ReadOnly[ToolAnnotations | None]
 
 
 class _ScanRequest(TypedDict):
@@ -138,13 +142,25 @@ def pin_tool_catalog(
 
 
 def _drifted(tool: MCPTool, pinned: PinnedMCPTool) -> bool:
-    return (tool.description or "") != pinned.description or tool.input_schema != pinned.input_schema
+    annotations: Final[dict[str, object] | None] = (
+        None if tool.annotations is None else tool.annotations.model_dump(by_alias=True, exclude_none=True) or None
+    )
+    return (
+        (tool.description or "") != pinned.description
+        or tool.title != pinned.title
+        or tool.input_schema != pinned.input_schema
+        or tool.output_schema != pinned.output_schema
+        or annotations != pinned.annotations
+    )
 
 
 def _pinned_tool(tool: MCPTool, pinned: PinnedMCPTool) -> MCPTool:
     entry: Final[_ServedCatalogEntry] = {
         "description": pinned.description or None,
         "input_schema": pinned.input_schema,
+        "title": pinned.title,
+        "output_schema": pinned.output_schema,
+        "annotations": ToolAnnotations.model_validate(pinned.annotations) if pinned.annotations else None,
     }
     return _with_served_entry(tool, entry)
 

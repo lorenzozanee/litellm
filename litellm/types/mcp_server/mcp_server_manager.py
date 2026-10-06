@@ -72,12 +72,15 @@ class MCPOAuthIdentityBinding(LiteLLMBaseModel):
 
 
 class PinnedMCPTool(LiteLLMBaseModel):
-    """One tool of an admin-pinned catalog: the description and input schema tools/list keeps serving."""
+    """One tool of an admin-pinned catalog."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    title: str | None = None
     description: str = ""
     input_schema: dict[str, object] = Field(default_factory=dict)
+    output_schema: dict[str, object] | None = None
+    annotations: dict[str, object] | None = None
 
 
 _PINNED_TOOLS: Final[TypeAdapter[dict[str, PinnedMCPTool] | None]] = TypeAdapter(dict[str, PinnedMCPTool] | None)
