@@ -5373,9 +5373,9 @@ class TestStreamingClientDisconnectLogging:
         ProxyLogging._callback_capabilities_cache.clear()
 class TestCancelOnDisconnect:
     """
-    Coverage for the opt-in `general_settings.cancel_on_disconnect` flag:
+    Coverage for default-on `general_settings.cancel_on_disconnect` behavior:
     cancelling the in-flight upstream LLM call when the HTTP client disconnects
-    (issue #13774), without changing the default code path and without skipping
+    (issue #37140), unless explicitly disabled, without skipping
     failure accounting (post_call_failure_hook) on the resulting 499.
     """
 
@@ -5494,7 +5494,7 @@ class TestCancelOnDisconnect:
             skip_pre_call_logic=True,
         )
 
-    async def test_disconnect_ignored_when_flag_disabled(self, monkeypatch):
+    async def test_disconnect_ignored_when_flag_explicitly_disabled(self, monkeypatch):
         upstream_cancelled = asyncio.Event()
         model_response = litellm.ModelResponse()
 
@@ -5508,13 +5508,72 @@ class TestCancelOnDisconnect:
 
         result = await self._drive_base_process_llm_request(
             monkeypatch,
-            general_settings={},
+            general_settings={"cancel_on_disconnect": False},
             llm_call=llm_call,
             request=self._request([{"type": "http.disconnect"}]),
         )
 
         assert result is model_response
         assert not upstream_cancelled.is_set()
+
+    @pytest.mark.parametrize(
+        "general_settings",
+        [
+            pytest.param({}, id="unset"),
+            pytest.param({"cancel_on_disconnect": None}, id="none"),
+            pytest.param({"cancel_on_disconnect": True}, id="true"),
+        ],
+    )
+    async def test_disconnect_cancels_upstream_by_default(self, monkeypatch, general_settings):
+        upstream_cancelled = asyncio.Event()
+
+        async def llm_call():
+            try:
+                await asyncio.sleep(0.05)
+                return litellm.ModelResponse()
+            except asyncio.CancelledError:
+                upstream_cancelled.set()
+                raise
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._drive_base_process_llm_request(
+                monkeypatch,
+                general_settings=general_settings,
+                llm_call=llm_call,
+                request=self._request([{"type": "http.disconnect"}]),
+            )
+
+        assert exc_info.value.status_code == 499
+        assert upstream_cancelled.is_set()
+
+    async def test_connected_request_completes_without_cancelling_upstream(self, monkeypatch):
+        upstream_cancelled = asyncio.Event()
+        model_response = litellm.ModelResponse()
+
+        async def llm_call():
+            try:
+                await asyncio.sleep(0.01)
+                return model_response
+            except asyncio.CancelledError:
+                upstream_cancelled.set()
+                raise
+
+        result = await self._drive_base_process_llm_request(
+            monkeypatch,
+            general_settings={},
+            llm_call=llm_call,
+            request=self._request(
+                [{"type": "http.request", "body": b"", "more_body": False}]
+            ),
+        )
+
+        assert result is model_response
+        assert not upstream_cancelled.is_set()
+
+    def test_config_defaults_cancel_on_disconnect_to_true(self):
+        from litellm.proxy._types import ConfigGeneralSettings
+
+        assert ConfigGeneralSettings().cancel_on_disconnect is True
 
     async def test_disconnect_cancels_upstream_when_flag_enabled(self, monkeypatch):
         upstream_cancelled = asyncio.Event()

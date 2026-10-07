@@ -2643,7 +2643,7 @@ class ProxyBaseLLMRequestProcessing:
         llm_responses: Final = asyncio.gather(*tasks)  # run the moderation check in parallel to the actual llm api call
 
         try:
-            if general_settings.get("cancel_on_disconnect", False):
+            if general_settings.get("cancel_on_disconnect") is not False:
                 responses = await _await_llm_call_cancelling_on_disconnect(request, llm_responses)
             else:
                 responses = await llm_responses

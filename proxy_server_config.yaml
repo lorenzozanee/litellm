@@ -237,7 +237,7 @@ general_settings:
   # coordination_redis:  # standalone Redis for cross-pod coordination: rate limits, spend tracking, pod locks, shared health checks
   #   host: localhost
   #   port: 6379
-  # cancel_on_disconnect: true # cancel the in-flight upstream LLM request (non-streaming) when the client disconnects, freeing backend capacity (e.g. a vLLM GPU slot)
+  # cancel_on_disconnect: false # opt out of cancelling the in-flight upstream LLM request (non-streaming) when the client disconnects
   # database_url: "postgresql://<user>:<password>@<host>:<port>/<dbname>" # [OPTIONAL] use for token-based auth to proxy
 
   pass_through_endpoints:
@@ -252,4 +252,4 @@ general_settings:
   # settings for using redis caching
   # REDIS_HOST: redis-16337.c322.us-east-1-2.ec2.cloud.redislabs.com
   # REDIS_PORT: "16337"
-  # REDIS_PASSWORD: 
+  # REDIS_PASSWORD:

@@ -2935,8 +2935,8 @@ class ConfigGeneralSettings(LiteLLMPydanticObjectBase):
         description="how often (in seconds) each pod reloads config-in-DB objects (models, credentials, guardrails, etc.) when store_model_in_db is enabled; lower values speed up multi-pod convergence at the cost of more DB load. Applied on proxy startup",
     )
     cancel_on_disconnect: bool | None = Field(
-        None,
-        description="cancel the in-flight upstream LLM request (non-streaming) when the client disconnects, freeing backend capacity (e.g. a vLLM GPU slot); the request is logged as a 499 failure",
+        True,
+        description="cancel the in-flight upstream LLM request (non-streaming) when the client disconnects, freeing backend capacity (e.g. a vLLM GPU slot); set false to opt out; the request is logged as a 499 failure",
     )
     infer_model_from_keys: bool | None = Field(
         None,
