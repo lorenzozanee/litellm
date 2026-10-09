@@ -552,6 +552,61 @@ def test_convert_to_model_response_object_basic():
     # hidden params
     assert result._hidden_params is not None
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("usage", "expected_usage_missing", "expected_usage"),
+    [
+        ("omit", True, (0, 0, 0)),
+        (None, True, (0, 0, 0)),
+        ({}, True, (0, 0, 0)),
+        ({"prompt_tokens": 4}, True, None),
+        ({"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}, False, (0, 0, 0)),
+    ],
+)
+async def test_acompletion_preserves_usage_missing_metadata(
+    usage: object, expected_usage_missing: bool, expected_usage: tuple[int, int, int] | None
+):
+    import httpx
+
+    from litellm.llms.custom_httpx.http_handler import AsyncHTTPHandler
+
+    response_body = {
+        "id": "chatcmpl-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "mistral-small-latest",
+        "choices": [
+            {
+                "index": 0,
+                "finish_reason": "stop",
+                "message": {"role": "assistant", "content": "Hi."},
+            }
+        ],
+    }
+    if usage != "omit":
+        response_body["usage"] = usage
+
+    handler = AsyncHTTPHandler()
+    handler.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json=response_body))
+    )
+    response = await litellm.acompletion(
+        model="mistral/mistral-small-latest",
+        messages=[{"role": "user", "content": "Hello"}],
+        api_key="test-key",
+        client=handler,
+    )
+
+    actual_usage = (response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens)
+    if expected_usage is not None:
+        assert actual_usage == expected_usage
+    else:
+        assert response.usage.prompt_tokens == 4
+        assert response.usage.completion_tokens == 0
+    assert response._hidden_params.get("usage_missing") is expected_usage_missing
+
+
 def test_convert_image_input_dict_response_to_chat_completion_response():
     """Test conversion on a response with an image input."""
     response_object = {

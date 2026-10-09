@@ -772,6 +772,13 @@ def convert_to_model_response_object(
                     model_response_object.hidden_params = {}
                 model_response_object.hidden_params.update(hidden_params)
 
+            provider_usage: Final = response_object.get("usage")
+            model_response_object.hidden_params["usage_missing"] = (
+                provider_usage is None
+                or provider_usage.get("prompt_tokens") is None
+                or provider_usage.get("completion_tokens") is None
+            )
+
             if _response_headers is not None:
                 model_response_object._response_headers = _response_headers
 
