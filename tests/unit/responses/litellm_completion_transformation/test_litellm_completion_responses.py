@@ -4507,7 +4507,7 @@ class TestCacheControlPreservation:
         the Responses API -> Chat Completion content transformation."""
         content = [
             {
-                "type": "text",
+                "type": "input_text",
                 "text": "hello",
                 "cache_control": {"type": "ephemeral"},
             }
@@ -4520,14 +4520,20 @@ class TestCacheControlPreservation:
         assert result[0]["cache_control"] == {"type": "ephemeral"}
 
     def test_content_without_cache_control_unaffected(self):
-        """Content blocks that don't have cache_control should be unaffected."""
-        content = [{"type": "text", "text": "hello"}]
-        result = LiteLLMCompletionResponsesConfig._transform_responses_api_content_to_chat_completion_content(
+        content: Final = [{"type": "text", "text": "hello"}]
+        result: Final = LiteLLMCompletionResponsesConfig._transform_responses_api_content_to_chat_completion_content(
             content
         )
         assert isinstance(result, list)
         assert len(result) == 1
         assert "cache_control" not in result[0]
+
+    def test_single_input_text_block_without_cache_control_returns_a_string(self):
+        content: Final = [{"type": "input_text", "text": "Reply in JSON with key a. hi"}]
+        result: Final = LiteLLMCompletionResponsesConfig._transform_responses_api_content_to_chat_completion_content(
+            content
+        )
+        assert result == "Reply in JSON with key a. hi"
 
     def test_cache_control_preserved_in_input_item_transformation(self):
         """cache_control survives the full input-item -> messages transformation."""
@@ -5352,3 +5358,29 @@ async def test_bridge_rejects_untranslatable_tool_choice_with_a_400(stream: bool
         )
     assert exc_info.value.status_code == 400
     assert "tool_choice={'type': 'file_search'}" in str(exc_info.value)
+
+
+def test_chat_responses_chat_round_trip_preserves_json_user_string():
+    from litellm.completion_extras.litellm_responses_transformation.transformation import (
+        LiteLLMResponsesTransformationHandler,
+    )
+
+    prompt: Final = "Reply in JSON with key a. hi"
+    chat_to_responses: Final = LiteLLMResponsesTransformationHandler()
+    responses_input: Final = chat_to_responses.convert_chat_completion_messages_to_responses_api(
+        [{"role": "user", "content": prompt}]
+    )[0]
+    responses_to_chat: Final = LiteLLMCompletionResponsesConfig.transform_responses_api_input_to_messages(
+        responses_input, responses_api_request={}
+    )
+    chat_content: Final = responses_to_chat[0].get("content")
+    responses_params: Final = {}
+    chat_to_responses._map_optional_params_to_responses_api_request(
+        {"response_format": {"type": "json_object"}}, responses_params
+    )
+    chat_response_format: Final = LiteLLMCompletionResponsesConfig._transform_text_format_to_response_format(
+        responses_params["text"]
+    )
+
+    assert chat_content == prompt
+    assert chat_response_format == {"type": "json_object"}

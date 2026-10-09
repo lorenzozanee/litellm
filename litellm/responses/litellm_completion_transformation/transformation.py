@@ -1869,6 +1869,15 @@ class LiteLLMCompletionResponsesConfig:
                         if "cache_control" in item:
                             content_block["cache_control"] = item["cache_control"]
                         content_list.append(content_block)
+            if len(content) == 1 and isinstance(content[0], dict):
+                single_input_text: Final = content[0]
+                single_input_text_value: Final[object] = single_input_text.get("text")
+                if (
+                    single_input_text.get("type") == "input_text"
+                    and isinstance(single_input_text_value, str)
+                    and "cache_control" not in single_input_text
+                ):
+                    return single_input_text_value
             return content_list
         else:
             raise ValueError(f"Invalid content type: {type(content)}")
