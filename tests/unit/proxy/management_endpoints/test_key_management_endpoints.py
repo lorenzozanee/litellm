@@ -2446,6 +2446,126 @@ async def test_prepare_key_update_data_budget_limits_serializes_windows():
 
 
 @pytest.mark.asyncio
+async def test_prepare_key_update_data_updates_matching_budget_limit_window():
+    existing_key = LiteLLM_VerificationToken(
+        token="test-token",
+        max_budget=5.0,
+        budget_duration="7d",
+        budget_limits=[
+            {"budget_duration": "1d", "max_budget": 2.0, "reset_at": "2026-09-02T00:00:00+00:00"},
+            {"budget_duration": "7d", "max_budget": 5.0, "reset_at": "2026-09-01T00:00:00+00:00"},
+        ],
+    )
+
+    result = await prepare_key_update_data(
+        data=UpdateKeyRequest(key="test-token", max_budget=20.0, budget_duration="30d"),
+        existing_key_row=existing_key,
+    )
+
+    windows = json.loads(result["budget_limits"])
+    assert windows[0] == {
+        "budget_duration": "1d",
+        "max_budget": 2.0,
+        "reset_at": "2026-09-02T00:00:00+00:00",
+    }
+    assert windows[1]["budget_duration"] == "30d"
+    assert windows[1]["max_budget"] == 20.0
+    assert windows[1]["reset_at"] != "2026-09-01T00:00:00+00:00"
+    from litellm.proxy.auth.auth_checks import _virtual_key_multi_budget_check
+
+    updated_key = UserAPIKeyAuth(token="test-token", budget_limits=windows)
+    with patch(
+        "litellm.proxy.proxy_server.get_current_spend",
+        new_callable=AsyncMock,
+        side_effect=[0.0, 10.0],
+    ):
+        await _virtual_key_multi_budget_check(valid_token=updated_key)
+
+
+@pytest.mark.asyncio
+async def test_prepare_key_update_data_rejects_ambiguous_budget_windows():
+    window = {"budget_duration": "7d", "max_budget": 5.0, "reset_at": "2026-09-01T00:00:00+00:00"}
+    existing_key = LiteLLM_VerificationToken(
+        token="test-token",
+        max_budget=5.0,
+        budget_duration="7d",
+        budget_limits=[window, dict(window)],
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await prepare_key_update_data(
+            data=UpdateKeyRequest(key="test-token", max_budget=20.0, budget_duration="30d"),
+            existing_key_row=existing_key,
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "include budget_limits" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_prepare_key_update_data_leaves_unmatched_budget_windows_unchanged():
+    existing_key = LiteLLM_VerificationToken(
+        token="test-token",
+        max_budget=5.0,
+        budget_duration="7d",
+        budget_limits=[{"budget_duration": "1d", "max_budget": 2.0}],
+    )
+
+    result = await prepare_key_update_data(
+        data=UpdateKeyRequest(key="test-token", max_budget=20.0, budget_duration="30d"),
+        existing_key_row=existing_key,
+    )
+
+    assert "budget_limits" not in result
+
+
+@pytest.mark.asyncio
+async def test_prepare_key_update_data_preserves_window_reset_when_only_limit_changes():
+    reset_at = "2026-09-01T00:00:00+00:00"
+    existing_key = LiteLLM_VerificationToken(
+        token="test-token",
+        max_budget=5.0,
+        budget_duration="7d",
+        budget_limits=[{"budget_duration": "7d", "max_budget": 5.0, "reset_at": reset_at}],
+    )
+
+    result = await prepare_key_update_data(
+        data=UpdateKeyRequest(key="test-token", max_budget=20.0),
+        existing_key_row=existing_key,
+    )
+
+    assert json.loads(result["budget_limits"]) == [
+        {"budget_duration": "7d", "max_budget": 20.0, "reset_at": reset_at}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_prepare_key_update_data_explicit_budget_limits_override_scalar_sync():
+    existing_key = LiteLLM_VerificationToken(
+        token="test-token",
+        max_budget=5.0,
+        budget_duration="7d",
+        budget_limits=[{"budget_duration": "7d", "max_budget": 5.0, "reset_at": "2026-09-01T00:00:00+00:00"}],
+    )
+    explicit_windows = [{"budget_duration": "1d", "max_budget": 3.0}]
+
+    result = await prepare_key_update_data(
+        data=UpdateKeyRequest(
+            key="test-token",
+            max_budget=20.0,
+            budget_duration="30d",
+            budget_limits=explicit_windows,
+        ),
+        existing_key_row=existing_key,
+    )
+
+    windows = json.loads(result["budget_limits"])
+    assert len(windows) == 1
+    assert windows[0]["budget_duration"] == "1d"
+    assert windows[0]["max_budget"] == 3.0
+
+
+@pytest.mark.asyncio
 async def test_prepare_key_update_data_disable_global_guardrails_false_no_premium(
     monkeypatch,
 ):

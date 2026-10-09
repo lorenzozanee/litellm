@@ -11717,7 +11717,7 @@ def test_set_budget_reset_at_clears_when_budget_duration_null():
     data = UpdateTeamRequest(team_id="test-team", budget_duration=None)
     updated_kv = {"team_id": "test-team", "budget_duration": None}
 
-    _set_budget_reset_at(data, updated_kv)
+    _set_budget_reset_at(data, updated_kv, LiteLLM_TeamTable(team_id="test-team"))
 
     assert "budget_reset_at" in updated_kv
     assert updated_kv["budget_reset_at"] is None
@@ -11734,7 +11734,7 @@ def test_set_budget_reset_at_noop_when_budget_duration_not_sent():
     data = UpdateTeamRequest(team_id="test-team")
     updated_kv = {"team_id": "test-team"}
 
-    _set_budget_reset_at(data, updated_kv)
+    _set_budget_reset_at(data, updated_kv, LiteLLM_TeamTable(team_id="test-team"))
 
     assert "budget_reset_at" not in updated_kv
 
@@ -11750,7 +11750,7 @@ def test_set_budget_reset_at_sets_value_when_budget_duration_provided():
     data = UpdateTeamRequest(team_id="test-team", budget_duration="30d")
     updated_kv = {"team_id": "test-team", "budget_duration": "30d"}
 
-    _set_budget_reset_at(data, updated_kv)
+    _set_budget_reset_at(data, updated_kv, LiteLLM_TeamTable(team_id="test-team"))
 
     assert "budget_reset_at" in updated_kv
     assert updated_kv["budget_reset_at"] is not None
@@ -16444,6 +16444,53 @@ async def test_update_team_team_admin_resending_budget_settings_does_not_push_ba
     written = prisma.db.litellm_teamtable.update.call_args.kwargs["data"]
     assert written["tpm_limit"] == 5000
     assert not {"budget_duration", "budget_reset_at", "budget_limits"} & written.keys()
+
+
+@pytest.mark.asyncio
+async def test_update_team_updates_matching_budget_limit_window(disable_audit_logging_for_mocked_team):
+    import contextlib
+    from unittest.mock import MagicMock
+
+    stored_windows = [
+        {"budget_duration": "1d", "max_budget": 2.0, "reset_at": "2026-09-02T00:00:00Z"},
+        {"budget_duration": "7d", "max_budget": 5.0, "reset_at": "2026-09-01T00:00:00Z"},
+    ]
+    existing_team = MagicMock()
+    existing_team.metadata = {}
+    existing_team.model_dump.return_value = {
+        "team_id": "test_team_id",
+        "team_alias": "test_team",
+        "metadata": {},
+        "max_budget": 5.0,
+        "budget_duration": "7d",
+        "budget_limits": stored_windows,
+        "members_with_roles": [{"user_id": "team-admin", "role": "admin"}],
+    }
+
+    with contextlib.ExitStack() as stack:
+        prisma = _wire_update_team(stack, {})
+        prisma.db.litellm_teamtable.find_unique = AsyncMock(return_value=existing_team)
+        await update_team(
+            data=UpdateTeamRequest(team_id="test_team_id", max_budget=20.0, budget_duration="30d"),
+            http_request=_update_request_stub(),
+            user_api_key_dict=_PROXY_ADMIN_CALLER,
+        )
+
+    written = prisma.db.litellm_teamtable.update.call_args.kwargs["data"]
+    windows = json.loads(written["budget_limits"])
+    assert windows[0] == stored_windows[0]
+    assert windows[1]["budget_duration"] == "30d"
+    assert windows[1]["max_budget"] == 20.0
+    assert windows[1]["reset_at"] != "2026-09-01T00:00:00+00:00"
+    from litellm.proxy.auth.auth_checks import _team_multi_budget_check
+
+    updated_team = LiteLLM_TeamTable(team_id="test_team_id", budget_limits=windows)
+    with patch(
+        "litellm.proxy.proxy_server.get_current_spend",
+        new_callable=AsyncMock,
+        side_effect=[0.0, 10.0],
+    ):
+        await _team_multi_budget_check(team_object=updated_team)
 
 
 @pytest.mark.asyncio

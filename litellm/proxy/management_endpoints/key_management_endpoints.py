@@ -120,6 +120,7 @@ from litellm.proxy.management_helpers.access_group_key_sync import (
     sync_key_regeneration_access_group_membership,
     sync_key_update_access_group_membership,
 )
+from litellm.proxy.management_helpers.budget_limit_updates import synchronize_matching_budget_limit_window
 from litellm.proxy.management_helpers.key_settings_audit import with_settings_updated_at
 from litellm.proxy.management_helpers.object_permission_utils import (  # noqa: F401  # legacy module exports
     _set_object_permission,  # pyright: ignore[reportPrivateUsage,reportUnusedImport]  # backwards-compatible package export
@@ -2590,6 +2591,21 @@ async def prepare_key_update_data(
     non_default_values = prepare_metadata_fields(
         data=data, non_default_values=non_default_values, existing_metadata=_metadata
     )
+
+    if "budget_limits" not in non_default_values and {"max_budget", "budget_duration"} & data.model_fields_set:
+        synchronized_budget_limits: Final = synchronize_matching_budget_limit_window(
+            existing_windows=cast(Sequence[Mapping[str, object]], existing_key_row.budget_limits or ()),
+            current_max_budget=existing_key_row.max_budget,
+            current_budget_duration=existing_key_row.budget_duration,
+            updated_max_budget=(
+                data.max_budget if "max_budget" in data.model_fields_set else existing_key_row.max_budget
+            ),
+            updated_budget_duration=(
+                data.budget_duration if "budget_duration" in data.model_fields_set else existing_key_row.budget_duration
+            ),
+        )
+        if synchronized_budget_limits is not None:
+            non_default_values["budget_limits"] = synchronized_budget_limits
 
     return non_default_values
 

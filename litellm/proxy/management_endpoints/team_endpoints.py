@@ -170,6 +170,7 @@ from litellm.proxy.management_helpers.access_group_team_sync import (
     reconcile_team_access_group_membership,
     sync_team_access_group_membership,
 )
+from litellm.proxy.management_helpers.budget_limit_updates import synchronize_matching_budget_limit_window
 from litellm.proxy.management_helpers.object_permission_utils import (  # noqa: F401  # legacy module exports
     _set_object_permission,  # pyright: ignore[reportPrivateUsage,reportUnusedImport]  # backwards-compatible package export
     enforce_all_proxy_mcp_servers_grant_is_admin_only,
@@ -2468,7 +2469,7 @@ async def update_team(
             )
 
         # Check budget_duration and budget_reset_at
-        _set_budget_reset_at(data, updated_kv)
+        _set_budget_reset_at(data, updated_kv, existing_team)
 
         _team_member_fields_in_request: Final = {
             field
@@ -2691,7 +2692,7 @@ async def patch_team(
         raise handle_exception_on_proxy(e)
 
 
-def _set_budget_reset_at(data: UpdateTeamRequest, updated_kv: dict) -> None:
+def _set_budget_reset_at(data: UpdateTeamRequest, updated_kv: dict, existing_team: LiteLLM_TeamTable) -> None:
     """Set budget_reset_at in updated_kv if budget_duration is provided."""
     if data.budget_duration is not None:
         from litellm.proxy.common_utils.timezone_utils import get_budget_reset_time
@@ -2710,6 +2711,22 @@ def _set_budget_reset_at(data: UpdateTeamRequest, updated_kv: dict) -> None:
             w["reset_at"] = get_budget_reset_time(budget_duration=w["budget_duration"]).isoformat()
             initialized_windows.append(w)
         updated_kv["budget_limits"] = json.dumps(initialized_windows)
+
+    if "budget_limits" not in updated_kv and {"max_budget", "budget_duration"} & data.model_fields_set:
+        synchronized_budget_limits: Final = synchronize_matching_budget_limit_window(
+            existing_windows=tuple(
+                window if isinstance(window, dict) else window.model_dump(mode="json")
+                for window in existing_team.budget_limits or ()
+            ),
+            current_max_budget=existing_team.max_budget,
+            current_budget_duration=existing_team.budget_duration,
+            updated_max_budget=(data.max_budget if "max_budget" in data.model_fields_set else existing_team.max_budget),
+            updated_budget_duration=(
+                data.budget_duration if "budget_duration" in data.model_fields_set else existing_team.budget_duration
+            ),
+        )
+        if synchronized_budget_limits is not None:
+            updated_kv["budget_limits"] = synchronized_budget_limits
 
 
 async def handle_update_object_permission(data_json: dict, existing_team_row: _ObjectPermissionRow) -> dict:
