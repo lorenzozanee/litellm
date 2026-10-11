@@ -42,6 +42,37 @@ async def test_dual_cache_async_batch_get_cache_coalesces_concurrent_redis_reads
 
 
 @pytest.mark.asyncio
+async def test_dual_cache_async_batch_get_cache_waits_for_in_flight_redis_read():
+    redis_cache = MagicMock(spec=RedisCache)
+    redis_read_started = asyncio.Event()
+    other_redis_read_started = asyncio.Event()
+    finish_redis_read = asyncio.Event()
+
+    async def _mock_async_batch_get_cache(key_list, parent_otel_span=None):
+        if "existing-key" in key_list:
+            redis_read_started.set()
+            await finish_redis_read.wait()
+        else:
+            other_redis_read_started.set()
+        return {key: 99 if key == "existing-key" else 7 for key in key_list}
+
+    redis_cache.async_batch_get_cache = AsyncMock(side_effect=_mock_async_batch_get_cache)
+    dual_cache = DualCache(redis_cache=redis_cache, default_redis_batch_cache_expiry=10)
+
+    first = asyncio.create_task(dual_cache.async_batch_get_cache(["existing-key"]))
+    await redis_read_started.wait()
+    second = asyncio.create_task(dual_cache.async_batch_get_cache(["existing-key", "other-key"]))
+    await other_redis_read_started.wait()
+
+    finish_redis_read.set()
+    assert await asyncio.gather(first, second) == [[99], [99, 7]]
+    assert [call.args[0] for call in redis_cache.async_batch_get_cache.await_args_list] == [
+        ["existing-key"],
+        ["other-key"],
+    ]
+
+
+@pytest.mark.asyncio
 async def test_dual_cache_async_batch_get_cache_rolls_back_redis_reservation_on_error():
     dual_cache = DualCache(redis_cache=MagicMock(spec=RedisCache), default_redis_batch_cache_expiry=10)
     keys = ["shared_a", "shared_b"]

@@ -13,6 +13,7 @@ import itertools
 import logging
 import time
 from collections.abc import Mapping, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Final
@@ -57,6 +58,8 @@ class PendingBatchRead:
     result: list[object | None]
     redis_keys: list[str]
     previous_access_times: dict[str, float | None]
+    owned_reads: dict[str, Future[object | None]]
+    waiting_reads: dict[str, Future[object | None]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +103,7 @@ class DualCache(BaseCache):
         self.redis_cache = redis_cache
         self.last_redis_batch_access_time = LimitedSizeOrderedDict(max_size=default_max_redis_batch_cache_size)
         self._last_redis_batch_access_time_lock = Lock()
+        self._pending_redis_batch_reads: dict[str, Future[object | None]] = {}
         self.redis_batch_cache_expiry = (
             default_redis_batch_cache_expiry or litellm.default_redis_batch_cache_expiry or 10
         )
@@ -338,6 +342,71 @@ class DualCache(BaseCache):
         result: Final = in_memory_result if in_memory_result is not None else tuple(None for _ in key_list)
         return self._reserve_redis_batch_keys(time.time(), key_list, result)
 
+    def _reserve_async_batch_get_keys(
+        self, current_time: float, keys: list[str], result: Sequence[object]
+    ) -> tuple[
+        list[str],
+        dict[str, float | None],
+        dict[str, Future[object | None]],
+        dict[str, Future[object | None]],
+    ]:
+        redis_keys: Final[list[str]] = []
+        previous_access_times: Final[dict[str, float | None]] = {}
+        owned_reads: Final[dict[str, Future[object | None]]] = {}
+        waiting_reads: Final[dict[str, Future[object | None]]] = {}
+        with self._last_redis_batch_access_time_lock:
+            for key, value in zip(keys, result):
+                if value is not None:
+                    continue
+                pending_read: Future[object | None] | None = self._pending_redis_batch_reads.get(key)
+                if pending_read is not None and not pending_read.done():
+                    waiting_reads[key] = pending_read
+                    continue
+                if (
+                    key not in self.last_redis_batch_access_time
+                    or current_time - self.last_redis_batch_access_time[key] >= self.redis_batch_cache_expiry
+                ):
+                    new_read = Future[object | None]()
+                    redis_keys.append(key)
+                    previous_access_times[key] = (
+                        self.last_redis_batch_access_time[key] if key in self.last_redis_batch_access_time else None
+                    )
+                    self.last_redis_batch_access_time[key] = current_time
+                    if key in self._pending_redis_batch_reads:
+                        del self._pending_redis_batch_reads[key]
+                    self._pending_redis_batch_reads[key] = new_read
+                    owned_reads[key] = new_read
+                    if len(self._pending_redis_batch_reads) > self.last_redis_batch_access_time.max_size:
+                        del self._pending_redis_batch_reads[next(iter(self._pending_redis_batch_reads))]
+                elif pending_read is not None:
+                    waiting_reads[key] = pending_read
+        return redis_keys, previous_access_times, owned_reads, waiting_reads
+
+    def _finish_async_batch_get_reads(
+        self,
+        owned_reads: dict[str, Future[object | None]],
+        redis_result: Mapping[str, object] | None,
+        *,
+        retain_result: bool,
+    ) -> None:
+        with self._last_redis_batch_access_time_lock:
+            for key, future in owned_reads.items():
+                if not retain_result and self._pending_redis_batch_reads.get(key) is future:
+                    del self._pending_redis_batch_reads[key]
+                if not future.done():
+                    future.set_result(None if redis_result is None else redis_result.get(key))
+
+    async def _resolve_waiting_batch_get(
+        self, pending: PendingBatchRead, result: list[object | None] | None = None
+    ) -> list[object | None]:
+        keys: Final = list(pending.waiting_reads)
+        values: Final = await asyncio.gather(
+            *(asyncio.shield(asyncio.wrap_future(pending.waiting_reads[key])) for key in keys)
+        )
+        resolved: Final = dict(zip(keys, values))
+        base_result: Final = pending.result if result is None else result
+        return [resolved[key] if key in resolved else value for key, value in zip(pending.keys, base_result)]
+
     def _rollback_redis_batch_key_reservations(self, previous_access_times: dict[str, float | None]) -> None:
         with self._last_redis_batch_access_time_lock:
             for key, previous_time in previous_access_times.items():
@@ -347,7 +416,12 @@ class DualCache(BaseCache):
                     self.last_redis_batch_access_time[key] = previous_time
 
     async def _prepare_batch_get(
-        self, keys: list[str], local_only: bool, throttle_redis: bool = True, **kwargs: object
+        self,
+        keys: list[str],
+        local_only: bool,
+        throttle_redis: bool = True,
+        coalesce_in_flight: bool = False,
+        **kwargs: object,
     ) -> PendingBatchRead:
         result: list[object | None] = [None] * len(keys)
         if self.in_memory_cache is not None:
@@ -358,13 +432,25 @@ class DualCache(BaseCache):
 
         redis_keys: list[str] = []
         previous_access_times: dict[str, float | None] = {}
+        owned_reads: dict[str, Future[object | None]] = {}
+        waiting_reads: dict[str, Future[object | None]] = {}
         if None in result and self.redis_cache is not None and local_only is False:
             if throttle_redis:
-                redis_keys, previous_access_times = self._reserve_redis_batch_keys(time.time(), keys, result)
+                if coalesce_in_flight:
+                    redis_keys, previous_access_times, owned_reads, waiting_reads = self._reserve_async_batch_get_keys(
+                        time.time(), keys, result
+                    )
+                else:
+                    redis_keys, previous_access_times = self._reserve_redis_batch_keys(time.time(), keys, result)
             else:
                 redis_keys = [key for key, value in zip(keys, result) if value is None]
         return PendingBatchRead(
-            keys=keys, result=result, redis_keys=redis_keys, previous_access_times=previous_access_times
+            keys=keys,
+            result=result,
+            redis_keys=redis_keys,
+            previous_access_times=previous_access_times,
+            owned_reads=owned_reads,
+            waiting_reads=waiting_reads,
         )
 
     async def _apply_batch_get(
@@ -409,22 +495,39 @@ class DualCache(BaseCache):
         """With ``throttle_redis`` False every key memory cannot serve is read from Redis, exactly as a per-key
         ``async_get_cache`` would read it, instead of skipping keys that missed within ``redis_batch_cache_expiry``."""
         try:
-            pending: Final = await self._prepare_batch_get(keys, local_only, throttle_redis, **kwargs)
+            pending: Final = await self._prepare_batch_get(
+                keys, local_only, throttle_redis, coalesce_in_flight=throttle_redis, **kwargs
+            )
             # Only hit Redis for keys memory could not serve and enough time has passed since last access.
             if not pending.redis_keys or self.redis_cache is None:
+                if pending.waiting_reads:
+                    return await self._resolve_waiting_batch_get(pending)
                 return pending.result
             try:
                 redis_result: Final = await self.redis_cache.async_batch_get_cache(
                     pending.redis_keys, parent_otel_span=parent_otel_span
                 )
+            except asyncio.CancelledError:
+                self._rollback_redis_batch_key_reservations(pending.previous_access_times)
+                self._finish_async_batch_get_reads(pending.owned_reads, None, retain_result=False)
+                raise
             except Exception as e:
                 # Do not throttle subsequent callers if the Redis read fails.
                 self._rollback_redis_batch_key_reservations(pending.previous_access_times)
+                self._finish_async_batch_get_reads(pending.owned_reads, None, retain_result=False)
                 if isinstance(e, RedisCircuitBreakerOpenError):
                     verbose_logger.debug("LiteLLM Cache: async_batch_get_cache served from memory only: %s", e)
                     return pending.result
                 raise
-            return await self._apply_batch_get(pending, redis_result, **kwargs)
+            try:
+                result: Final = await self._apply_batch_get(pending, redis_result, **kwargs)
+            except BaseException:
+                self._finish_async_batch_get_reads(pending.owned_reads, None, retain_result=False)
+                raise
+            self._finish_async_batch_get_reads(pending.owned_reads, redis_result, retain_result=True)
+            if pending.waiting_reads:
+                return await self._resolve_waiting_batch_get(pending, result)
+            return result
         except Exception as e:
             log_redis_failure(
                 verbose_logger,
