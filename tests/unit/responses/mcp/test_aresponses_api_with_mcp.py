@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, patch
 # Import required modules
 import litellm
 from litellm.responses.mcp.litellm_proxy_mcp_handler import LiteLLM_Proxy_MCP_Handler
+from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
 from litellm.types.llms.openai import (
     ResponsesAPIResponse,
     ResponsesAPIStreamingResponse,
@@ -44,7 +45,7 @@ class MockUserAPIKeyAuth:
 async def test_mcp_helper_methods():
     """Test the core MCP helper methods in LiteLLM_Proxy_MCP_Handler"""
 
-    # Test _should_use_litellm_mcp_gateway
+    # Test the shared gateway predicate.
     mcp_tools: List[Any] = [
         {"type": "mcp", "server_url": "litellm_proxy", "require_approval": "never"}
     ]
@@ -62,15 +63,15 @@ async def test_mcp_helper_methods():
     ]
 
     # Should return True for MCP tools with litellm_proxy
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(mcp_tools) == True
+    assert should_use_litellm_mcp_gateway(mcp_tools) == True
 
     # Should return False for other tools
     assert (
-        LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(other_tools) == False
+        should_use_litellm_mcp_gateway(other_tools) == False
     )
 
     # Should return False for None
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(None) == False
+    assert should_use_litellm_mcp_gateway(None) == False
 
     # Test _parse_mcp_tools
     mixed_tools = mcp_tools + other_tools
@@ -234,7 +235,7 @@ async def test_aresponses_api_with_mcp_mock_integration():
     )
 
     # Test 1: Verify MCP tools are detected correctly
-    should_use_mcp = LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(
+    should_use_mcp = should_use_litellm_mcp_gateway(
         cast(Any, mcp_tools)
     )
     assert (

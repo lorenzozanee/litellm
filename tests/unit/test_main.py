@@ -1,19 +1,22 @@
 import asyncio
 import base64
+import builtins
 import contextlib
 import copy
 import io
 import json
 import logging
 import os
+import sys
 import threading
 import urllib.parse
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
+from types import ModuleType
 from typing import Final
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -28,6 +31,7 @@ from litellm import acompletion, completion
 from litellm import acompletion_with_retries, aresponses_with_retries, completion_with_retries, responses_with_retries
 from litellm import main as litellm_main
 from litellm.constants import CONTROL_OPTIONS_KEY
+from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
 from litellm.caching.base_cache import BaseCache
 from litellm.caching.caching import Cache
 from litellm.integrations.custom_logger import CustomLogger
@@ -3597,7 +3601,8 @@ def test_completion_forwards_store_and_prompt_cache_key_to_mcp_gateway():
     must be forwarded explicitly like safety_identifier and service_tier.
     """
     with patch.object(
-        import_module("litellm.responses.mcp.chat_completions_handler"), "acompletion_with_mcp"
+        import_module("litellm.responses.mcp.chat_completions_handler"),
+        "acompletion_with_mcp",
     ) as mock_mcp:
         result = litellm.completion(
             model="openai/gpt-4o",
@@ -3612,6 +3617,159 @@ def test_completion_forwards_store_and_prompt_cache_key_to_mcp_gateway():
         call_kwargs = mock_mcp.call_args.kwargs
         assert call_kwargs["store"] is False
         assert call_kwargs["prompt_cache_key"] == "test-cache-key"
+
+
+@pytest.mark.asyncio
+async def test_acompletion_with_function_tools_works_without_mcp_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_import: Final = builtins.__import__
+    for module_name in (
+        "litellm.responses.mcp.chat_completions_handler",
+        "litellm.responses.mcp.litellm_proxy_mcp_handler",
+        "litellm.proxy._experimental.mcp_server.catalog",
+    ):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    def import_without_mcp(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
+        if name == "mcp" or name.startswith("mcp."):
+            raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_mcp)
+    response = await litellm.acompletion(
+        model="openai/gpt-4o-mini",
+        messages=[{"role": "user", "content": "hello"}],
+        tools=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "noop",
+                    "description": "No operation",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            }
+        ],
+        mock_response="ok",
+    )
+
+    assert response.choices[0].message.content == "ok"
+
+
+@pytest.mark.asyncio
+async def test_acompletion_with_mcp_tools_surfaces_missing_mcp_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from litellm.exceptions import APIConnectionError
+
+    original_import: Final = builtins.__import__
+    for module_name in (
+        "litellm.responses.mcp.chat_completions_handler",
+        "litellm.responses.mcp.litellm_proxy_mcp_handler",
+        "litellm.proxy._experimental.mcp_server.catalog",
+    ):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    def import_without_mcp(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
+        if name == "mcp" or name.startswith("mcp."):
+            raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_mcp)
+    with pytest.raises(APIConnectionError) as exc_info:
+        await litellm.acompletion(
+            model="openai/gpt-4o-mini",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[{"type": "mcp", "server_url": "litellm_proxy"}],
+        )
+    assert "No module named 'mcp'" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_responses_function_tools_skip_mcp_import_when_sdk_is_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from litellm.responses.main import _responses_try_dispatch_mcp_gateway
+
+    original_import: Final = builtins.__import__
+    for module_name in (
+        "litellm.responses.mcp.responses_api_handler",
+        "litellm.responses.mcp.litellm_proxy_mcp_handler",
+        "litellm.proxy._experimental.mcp_server.catalog",
+    ):
+        monkeypatch.delitem(sys.modules, module_name, raising=False)
+
+    def import_without_mcp(
+        name: str,
+        globals: dict[str, object] | None = None,
+        locals: dict[str, object] | None = None,
+        fromlist: Sequence[str] = (),
+        level: int = 0,
+    ) -> ModuleType:
+        if name == "mcp" or name.startswith("mcp."):
+            raise ModuleNotFoundError("No module named 'mcp'", name="mcp")
+        return original_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_mcp)
+    result = _responses_try_dispatch_mcp_gateway(
+        tools=[{"type": "function", "name": "noop"}],
+        input="hello",
+        model="openai/gpt-4o-mini",
+        include=None,
+        instructions=None,
+        max_output_tokens=None,
+        prompt=None,
+        metadata=None,
+        parallel_tool_calls=None,
+        previous_response_id=None,
+        reasoning=None,
+        store=None,
+        background=None,
+        stream=None,
+        temperature=None,
+        text=None,
+        tool_choice=None,
+        top_p=None,
+        truncation=None,
+        user=None,
+        extra_headers=None,
+        extra_query=None,
+        extra_body=None,
+        timeout=None,
+        custom_llm_provider="openai",
+        kwargs={},
+        _is_async=True,
+        skip_mcp_handler=False,
+    )
+
+    assert result is None
+
+
+@pytest.mark.parametrize(
+    ("tools", "expected"),
+    [
+        ([{"type": "function", "function": {"name": "noop"}}], False),
+        ([{"type": "mcp", "server_url": "litellm_proxy"}], True),
+        ([{"type": "mcp", "server_url": "https://proxy.example/mcp/server"}], True),
+        ([{"type": "mcp", "server_url": "https://server.example/mcp"}], False),
+    ],
+)
+def test_mcp_gateway_detection_preserves_candidate_shapes(
+    tools: list[dict[str, object]], expected: bool
+) -> None:
+    assert should_use_litellm_mcp_gateway(tools) is expected
 
 
 @pytest.mark.asyncio

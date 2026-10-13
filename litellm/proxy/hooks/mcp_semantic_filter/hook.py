@@ -82,11 +82,9 @@ class SemanticToolFilterHook(CustomLogger):
 
         Only expands MCP tools pointing to litellm proxy, not external MCP servers.
         """
-        from litellm.responses.mcp.litellm_proxy_mcp_handler import (
-            LiteLLM_Proxy_MCP_Handler,
-        )
+        from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
 
-        return LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(tools)
+        return should_use_litellm_mcp_gateway(tools)
 
     async def _expand_mcp_tools(
         self,

@@ -28,6 +28,7 @@ from litellm.responses.mcp import litellm_proxy_mcp_handler as mcp_handler_modul
 from litellm.responses.mcp.litellm_proxy_mcp_handler import (
     LiteLLM_Proxy_MCP_Handler,
 )
+from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
 from litellm.types.guardrails import GuardrailEventHooks
 from litellm.types.llms.openai import ResponsesAPIResponse
 from litellm.types.mcp import MCPTransport
@@ -1031,10 +1032,10 @@ async def test_split_mcp_tools_skips_resolution_when_nothing_points_at_the_proxy
 
 
 def test_should_use_gateway_still_triggers_on_http_mcp_path():
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway([ZAPIER_TOOL]) is True
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway([EXPLICIT_GATEWAY_TOOL]) is True
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway([FUNCTION_TOOL]) is False
-    assert LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(None) is False
+    assert should_use_litellm_mcp_gateway([ZAPIER_TOOL]) is True
+    assert should_use_litellm_mcp_gateway([EXPLICIT_GATEWAY_TOOL]) is True
+    assert should_use_litellm_mcp_gateway([FUNCTION_TOOL]) is False
+    assert should_use_litellm_mcp_gateway(None) is False
 
 
 @pytest.mark.asyncio

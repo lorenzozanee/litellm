@@ -500,14 +500,13 @@ def anthropic_messages_handler(
     # reference the provider cannot resolve. Popped from kwargs so it never reaches the provider.
     skip_mcp_handler: Final = kwargs.pop("_skip_mcp_handler", False)
     if not skip_mcp_handler and tools:
-        from litellm.llms.anthropic.pass_through.messages.mcp_handler import (
-            anthropic_messages_with_mcp,
-        )
-        from litellm.responses.mcp.litellm_proxy_mcp_handler import (
-            LiteLLM_Proxy_MCP_Handler,
-        )
+        from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
 
-        if LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(tools=tools):
+        if should_use_litellm_mcp_gateway(tools=tools):
+            from litellm.llms.anthropic.pass_through.messages.mcp_handler import (
+                anthropic_messages_with_mcp,
+            )
+
             return anthropic_messages_with_mcp(
                 max_tokens=max_tokens,
                 messages=messages,

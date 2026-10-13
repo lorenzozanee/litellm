@@ -5244,16 +5244,13 @@ def completion(
     control_options: Final = _resolve_control_options(kwargs, model)
     skip_mcp_handler: Final = kwargs.pop("_skip_mcp_handler", False)
     if not skip_mcp_handler and tools:
-        from litellm.responses.mcp.chat_completions_handler import acompletion_with_mcp
-        from litellm.responses.mcp.litellm_proxy_mcp_handler import (
-            LiteLLM_Proxy_MCP_Handler,
-        )
+        from litellm.responses.mcp.tool_detection import should_use_litellm_mcp_gateway
         from litellm.types.llms.openai import ToolParam
 
-        # Check if MCP tools are present (following responses pattern)
-        # Cast tools to Optional[Iterable[ToolParam]] for type checking
         tools_for_mcp: Final = cast(Iterable[ToolParam] | None, tools)
-        if LiteLLM_Proxy_MCP_Handler.should_use_litellm_mcp_gateway(tools=tools_for_mcp):
+        if should_use_litellm_mcp_gateway(tools=tools_for_mcp):
+            from litellm.responses.mcp.chat_completions_handler import acompletion_with_mcp
+
             return acompletion_with_mcp(  # pyright: ignore[reportReturnType]  # MCP path returns a coroutine that acompletion() awaits; completion()'s sync return type omits it
                 model=model,
                 messages=messages,

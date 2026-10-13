@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 import litellm
 from litellm.types.utils import ModelResponse
 
-from litellm.responses.mcp import chat_completions_handler
+from litellm.responses.mcp import chat_completions_handler, tool_detection as mcp_tool_detection
 from litellm.responses.mcp.chat_completions_handler import (
     acompletion_with_mcp,
 )
@@ -43,9 +43,9 @@ async def test_acompletion_with_mcp_without_auto_execution_calls_model(monkeypat
     mock_acompletion = AsyncMock(return_value="ok")
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -118,9 +118,9 @@ async def test_acompletion_with_mcp_passes_mcp_server_auth_headers_to_process_to
         return ([], {})
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda t: True),
+        lambda t: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -291,9 +291,9 @@ async def test_acompletion_with_mcp_auto_exec_performs_follow_up(monkeypatch):
     mock_acompletion_func = AsyncMock(side_effect=mock_acompletion)
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -498,9 +498,9 @@ async def test_acompletion_with_mcp_adds_metadata_to_streaming(monkeypatch):
     mock_acompletion = AsyncMock(return_value=MockStreamingResponse())
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -637,9 +637,9 @@ async def test_acompletion_with_mcp_streaming_initial_call_is_streaming(monkeypa
     mock_acompletion = AsyncMock(return_value=MockStreamingResponse())
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -879,9 +879,9 @@ async def test_acompletion_with_mcp_streaming_metadata_in_correct_chunks(monkeyp
     mock_acompletion_func = AsyncMock(side_effect=mock_acompletion)
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -1181,9 +1181,9 @@ async def test_acompletion_with_mcp_streaming_drain_error_does_not_drop_final_ch
     mock_acompletion = AsyncMock(return_value=DrainErrorStreamingResponse())
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
@@ -1299,9 +1299,9 @@ async def test_acompletion_with_mcp_streaming_drains_inner_stream_after_exhausti
     mock_acompletion = AsyncMock(return_value=initial_stream)
 
     monkeypatch.setattr(
-        LiteLLM_Proxy_MCP_Handler,
+        mcp_tool_detection,
         "should_use_litellm_mcp_gateway",
-        staticmethod(lambda tools: True),
+        lambda tools: True,
     )
     monkeypatch.setattr(
         LiteLLM_Proxy_MCP_Handler,
