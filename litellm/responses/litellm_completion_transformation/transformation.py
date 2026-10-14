@@ -2878,10 +2878,19 @@ class LiteLLMCompletionResponsesConfig:
                 total_tokens=0,
             )
 
+        cached_tokens: Final = (
+            usage.prompt_tokens_details.cached_tokens or 0 if usage.prompt_tokens_details is not None else 0
+        )
+        input_tokens: Final = max(usage.prompt_tokens, cached_tokens)
+        total_tokens: Final = (
+            max(usage.total_tokens, input_tokens + usage.completion_tokens)
+            if input_tokens > usage.prompt_tokens
+            else usage.total_tokens
+        )
         response_usage: Final = ResponseAPIUsage(
-            input_tokens=usage.prompt_tokens,
+            input_tokens=input_tokens,
             output_tokens=usage.completion_tokens,
-            total_tokens=usage.total_tokens,
+            total_tokens=total_tokens,
         )
 
         # Preserve cost field if it exists (for streaming usage with cost calculation)

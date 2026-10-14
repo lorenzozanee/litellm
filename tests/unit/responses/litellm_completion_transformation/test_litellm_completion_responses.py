@@ -2839,6 +2839,25 @@ class TestToolTransformation:
 class TestUsageTransformation:
     """Test cases for usage transformation from Chat Completion to Responses API format"""
 
+    def test_transform_usage_never_reports_fewer_input_tokens_than_cached_tokens(self):
+        usage: Final = Usage(
+            prompt_tokens=6732,
+            completion_tokens=10,
+            total_tokens=6742,
+            prompt_tokens_details=PromptTokensDetailsWrapper(cached_tokens=7411),
+        )
+
+        response_usage: Final = LiteLLMCompletionResponsesConfig.transform_chat_completion_usage_to_responses_usage(
+            usage
+        )
+
+        assert response_usage.input_tokens == 7411
+        assert response_usage.input_tokens_details is not None
+        assert response_usage.input_tokens_details.cached_tokens == 7411
+        assert response_usage.input_tokens_details.cached_tokens <= response_usage.input_tokens
+        assert response_usage.output_tokens == 10
+        assert response_usage.total_tokens == 7421
+
     def test_transform_usage_with_cached_tokens_anthropic(self):
         """Test that cached_tokens from Anthropic are properly transformed to input_tokens_details"""
         # Setup: Simulate Anthropic usage with cache_read_input_tokens
